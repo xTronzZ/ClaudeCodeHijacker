@@ -11,6 +11,31 @@ A persistent local relay for Claude Code on macOS and Windows. It launches a nor
 
 There are no third-party Node.js dependencies.
 
+## API key
+
+Create a local `.env` from the committed template:
+
+```bash
+cd /path/to/ClaudeCodeHijacker
+cp .env.example .env
+chmod 600 .env
+```
+
+Then edit `.env`:
+
+```dotenv
+CLAUDE_RELAY_API_KEY=sk-ant-api03-your-real-key
+```
+
+The relay loads credentials in this order:
+
+1. `CLAUDE_RELAY_API_KEY` from the process environment;
+2. `ANTHROPIC_API_KEY` from the process environment;
+3. the same variables from the repository-root `.env` file;
+4. hidden terminal input when none of the above is configured.
+
+The real `.env` is ignored by Git. Only `.env.example` is committed; never put a real credential in that example file.
+
 ## Run
 
 From the project you want Claude to work on:
@@ -33,7 +58,7 @@ node ./claude-code-relay.cjs --project ../my-project -- --model haiku --permissi
 
 `npm start` is equivalent to running the relay with the current directory as the project.
 
-The API key prompt does not echo input. After the key is accepted, Claude Code behaves as a normal persistent interactive session with its regular tools, settings, plugins, MCP servers, permissions, session history, thinking, context management, prompt caching, and output limits.
+When no environment key is configured, the fallback API key prompt does not echo input. After the key is loaded, Claude Code behaves as a normal persistent interactive session with its regular tools, settings, plugins, MCP servers, permissions, session history, thinking, context management, prompt caching, and output limits.
 
 ## tmux
 

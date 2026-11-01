@@ -1,6 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const { loadApiKey } = require('./lib/env.cjs');
 const { resolveClaudeBinary } = require('./lib/platform.cjs');
 const { createRelay, redact } = require('./lib/relay.cjs');
 
@@ -10,7 +11,7 @@ function getHelp(platform = process.platform) {
     : platform === 'darwin'
       ? 'macOS: searches ~/.local/bin/claude, both Homebrew locations\n(/opt/homebrew/bin/claude and /usr/local/bin/claude), then PATH.'
       : 'Searches ~/.local/bin/claude and PATH for the executable.';
-  return `ClaudeCodeHijacker\n\nUsage:\n  node claude-code-relay.cjs [--project DIR] [-- CLAUDE_ARGS...]\n\nOptions:\n  --project DIR  Claude working directory (defaults to the current directory).\n  --help, -h     Show this help.\n\nArguments after -- are passed directly to Claude Code.\nExample: node claude-code-relay.cjs --project ../my-app -- --model haiku\n\nEnvironment:\n  CLAUDE_BINARY  Optional absolute path to the native Claude Code executable.\n\n${discovery}\nThe API key is read from hidden terminal input. Relay activity is written only to outputs/sessions/<run-id>/ and is never printed over the Claude UI.\n`;
+  return `ClaudeCodeHijacker\n\nUsage:\n  node claude-code-relay.cjs [--project DIR] [-- CLAUDE_ARGS...]\n\nOptions:\n  --project DIR  Claude working directory (defaults to the current directory).\n  --help, -h     Show this help.\n\nArguments after -- are passed directly to Claude Code.\nExample: node claude-code-relay.cjs --project ../my-app -- --model haiku\n\nEnvironment:\n  CLAUDE_RELAY_API_KEY  Preferred API key variable.\n  ANTHROPIC_API_KEY     Compatible API key variable.\n  CLAUDE_BINARY         Optional absolute path to the native Claude Code executable.\n\nThe relay checks process environment variables, then ${path.join(__dirname, '.env')}, and falls back to hidden terminal input.\n${discovery}\nRelay activity is written only to outputs/sessions/<run-id>/ and is never printed over the Claude UI.\n`;
 }
 
 function parseOptions(argv) {
@@ -73,7 +74,8 @@ async function main(argv = process.argv.slice(2)) {
   const outputDir = path.join(__dirname, 'outputs', 'sessions', runId);
   await fs.mkdir(outputDir, { recursive: true });
 
-  let apiKey = await readKeyWithoutEcho();
+  const loadedCredential = await loadApiKey({ envPath: path.join(__dirname, '.env') });
+  let apiKey = loadedCredential?.apiKey || await readKeyWithoutEcho();
   if (!apiKey.startsWith('sk-ant-') || apiKey.length < 30) throw new Error('Unexpected credential input; no upstream request sent.');
 
   let child;
