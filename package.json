@@ -1,0 +1,15 @@
+{
+  "name": "claude-code-hijacker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local Windows and macOS relay that rewrites Claude Code request metadata and streams Anthropic API responses back to the CLI.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node claude-code-relay.cjs --interactive --hi",
+    "test": "node --test",
+    "check": "node --check claude-code-relay.cjs"
+  }
+}
