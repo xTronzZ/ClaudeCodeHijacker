@@ -1,186 +1,99 @@
 # ClaudeCodeHijacker
 
-A local relay for **Windows and macOS** that intercepts Claude Code requests, rewrites client attribution metadata, and streams Anthropic API responses back to the CLI.
-
-The relay launches its own isolated Claude Code session. It keeps your regular Claude Code configuration separate, accepts the upstream API key through hidden terminal input, and saves credential-redacted request and response records locally.
+A persistent local relay for Claude Code on macOS and Windows. It launches a normal Claude Code session, rewrites client-attribution metadata, and forwards API traffic through a loopback-only listener.
 
 ## Requirements
 
-- Node.js **22 or newer**: [download Node.js](https://nodejs.org/en/download).
-- The native Claude Code CLI: [official installation instructions](https://code.claude.com/docs/en/setup).
-- Git, an interactive terminal, and an Anthropic API key with access to `claude-haiku-4-5`.
-- Permission to connect to a local loopback listener and Anthropic's API.
+- Node.js 22 or newer
+- The native Claude Code CLI
+- An interactive terminal or tmux pane
+- An Anthropic API key
 
-There are no third-party Node.js dependencies, so `npm install` is not required.
+There are no third-party Node.js dependencies.
 
-## Quick start
+## Run
 
-### Windows — PowerShell
-
-```powershell
-git clone https://github.com/xTronzZ/ClaudeCodeHijacker.git
-Set-Location ClaudeCodeHijacker
-node --version
-claude --version
-node .\claude-code-relay.cjs --interactive --hi
-```
-
-### macOS — Terminal
-
-Install the native CLI using Anthropic's installer or Homebrew. Anthropic documents this Homebrew command:
+From the project you want Claude to work on:
 
 ```bash
-brew install --cask claude-code
+node /path/to/ClaudeCodeHijacker/claude-code-relay.cjs
 ```
 
-Then clone and run:
+Or choose the project explicitly:
 
 ```bash
-git clone https://github.com/xTronzZ/ClaudeCodeHijacker.git
-cd ClaudeCodeHijacker
-node --version
-claude --version
-node ./claude-code-relay.cjs --interactive --hi
+node ./claude-code-relay.cjs --project ../my-project
 ```
 
-When prompted, paste your API key and press Enter. The key is not echoed or deliberately written to a file. The launched Claude Code process receives a local placeholder credential; the relay uses the real key only for the upstream request.
-
-On first launch, Claude Code may ask you to select a theme, approve the placeholder environment key, and trust the newly created empty working directory. These choices apply to the isolated configuration under this repository's `work/` directory. If onboarding reaches the 60-second limit, run the command again.
-
-The `--hi` option sends `Hi`. A successful run prints `UPSTREAM HTTP 200` and displays the real model reply in Claude Code. The greeting itself can vary.
-
-## Finding the Claude executable
-
-The relay checks common native installation paths and `PATH`:
-
-| Platform | Locations |
-| --- | --- |
-| Windows | `%USERPROFILE%\.local\bin\claude.exe` and `PATH` |
-| macOS | `~/.local/bin/claude`, Apple Silicon Homebrew under `/opt/homebrew/bin`, Intel Homebrew under `/usr/local/bin`, and `PATH` |
-
-You can override discovery with an absolute executable path. Paths containing spaces are supported.
-
-Windows:
-
-```powershell
-$env:CLAUDE_BINARY = (Get-Command claude.exe -ErrorAction Stop).Source
-node .\claude-code-relay.cjs --interactive --hi
-```
-
-macOS:
+Arguments after `--` are passed directly to Claude Code:
 
 ```bash
-export CLAUDE_BINARY="$(command -v claude)"
-node ./claude-code-relay.cjs --interactive --hi
+node ./claude-code-relay.cjs --project ../my-project -- --model haiku --permission-mode auto
 ```
 
-On Windows, use the native `.exe` rather than a `.cmd` launcher. The relay spawns the executable directly without a shell.
+`npm start` is equivalent to running the relay with the current directory as the project.
 
-## Usage
+The API key prompt does not echo input. After the key is accepted, Claude Code behaves as a normal persistent interactive session with its regular tools, settings, plugins, MCP servers, permissions, session history, thinking, context management, prompt caching, and output limits.
+
+## tmux
+
+The relay needs no tmux-specific configuration:
+
+```bash
+tmux new -s claude-relay
+cd /path/to/project
+node /path/to/ClaudeCodeHijacker/claude-code-relay.cjs
+```
+
+Runtime relay messages never write over the Claude UI. `CAPTURED`, `UPSTREAM`, listener, and error activity is written to `relay.log` inside the run directory.
+
+## How it works
 
 ```text
-node claude-code-relay.cjs [--interactive] [--hi]
-```
-
-| Option | Behavior |
-| --- | --- |
-| `--interactive` | Launch the Claude Code terminal interface. |
-| `--hi` | Send `Hi` with an output limit of 128 tokens. |
-| `--help`, `-h` | Show usage without launching Claude Code or opening a listener. |
-
-Without `--hi`, the prompt is `Reply exactly: RELAY_READY`, with a 16-token output limit. Without `--interactive`, Claude Code runs in print mode (`-p`) and returns JSON output. Hidden key entry still requires a real terminal.
-
-You can also use:
-
-```bash
-npm start
-```
-
-This runs the interactive greeting command.
-
-## How the relay works
-
-```text
-Claude Code (isolated configuration, placeholder key)
-      |
-      | HTTP to an automatically assigned 127.0.0.1 port
-      v
+Claude Code child process
+        |
+        | ANTHROPIC_BASE_URL=http://127.0.0.1:<random-port>
+        v
 Local Node.js relay
-      |
-      | Rewritten Messages request over HTTPS, real API key
-      v
+        |
+        | HTTPS with the real API key
+        v
 Anthropic API
-      |
-      | Streaming response
-      v
-Relay -> Claude Code terminal
 ```
 
-The child process receives a temporary `ANTHROPIC_BASE_URL` pointing to the local listener. This uses Claude Code's [documented gateway configuration](https://code.claude.com/docs/en/llm-gateway-connect). It does not attach to an already running terminal or VS Code session, change the system proxy, or install a TLS certificate.
+The listener binds to a random port on `127.0.0.1`. `ANTHROPIC_BASE_URL`, the placeholder key, and `NO_PROXY` are set only in the spawned Claude process environment. The relay does not:
 
-The relay applies these changes before forwarding the Messages request:
+- change the system proxy;
+- install a certificate;
+- modify the parent shell or tmux server environment;
+- attach to or intercept other Claude Code processes;
+- affect other tmux panes.
 
-| Area | Transformation |
-| --- | --- |
-| User-Agent | Use a relay-specific User-Agent. |
-| Client headers | Omit `x-app` and `x-claude-code-*` headers. |
-| Beta capabilities | Remove `claude-code-*` entries while preserving other capability entries. |
-| System attribution | Remove blocks starting with `x-anthropic-billing-header:`. |
-| Identity metadata | Remove the request's `metadata` object. |
-| Generation | Disable thinking, remove context management and cache controls, and apply the selected output limit. |
-| Authentication | Replace the placeholder credential with the upstream API key. |
+The child still uses normal Claude configuration and writes normal Claude session history, exactly as a direct Claude Code launch would.
 
-The observed `x-anthropic-billing-header:` marker is text in a system-prompt block, rather than a normal HTTP header. See Anthropic's [system attribution documentation](https://code.claude.com/docs/en/llm-gateway-protocol#system-prompt-attribution-block).
+Messages, token-counting, model-discovery, and other API paths are proxied upstream. For Messages payloads, the relay removes:
 
-Other system instructions remain, including wording that identifies Claude Code. The relay does not claim complete anonymity or that attribution metadata is the only information used by the server.
+- `x-app` and `x-claude-code-*` headers;
+- `claude-code-*` beta markers;
+- the `x-anthropic-billing-header:` system block;
+- the request `metadata` object.
 
-## Current behavior
+Generation settings and tool payloads remain unchanged. Server-side billing or promotional-credit classification is not guaranteed.
 
-- One real upstream Messages request is allowed per run. Further requests receive a local `400` response.
-- The upstream timeout is 30 seconds; the child process has a 60-second overall limit.
-- Interactive mode stops shortly after the upstream attempt finishes, leaving local records available for inspection.
-- Tools, installed plugins, MCP integrations, and other customizations are disabled in the isolated child process.
-- Startup probes, model discovery, and token counting are answered locally. Only the Messages request is forwarded upstream.
+## Logs
 
-This version is designed for one short exchange. It does not provide a persistent multi-turn session. If a reply hits the output limit, Claude Code may request a continuation, which the one-request limit rejects.
-
-The relay makes a real API call and may consume credits. Successful forwarding has been observed on Windows. **Server-side product classification and promotional-credit eligibility have not been independently verified.** A `200` response alone does not establish which balance paid for the request.
-
-Credentials requiring an explicit `anthropic-workspace-id` header need additional configuration; this version does not expose a workspace-selection option.
-
-## Local records
-
-Generated paths are relative to the repository:
+Every run gets a separate directory:
 
 ```text
-work/                    Isolated CLI configuration, working directory, debug logs
-outputs/relay/           Default prompt records
-outputs/hi/              Greeting records
+outputs/sessions/<run-id>/
+  relay.log
+  requests.json
+  forwarded-request-0001.json
+  upstream-response-0001.json
+  report.json
 ```
 
-| File | Contents |
-| --- | --- |
-| `interactive-requests.json` or `print-requests.json` | Captured incoming requests. |
-| `forwarded-request.json` | The rewritten upstream request with authentication redacted. |
-| `upstream-response.json` | Status, headers, response stream, parsed events, and generated text. |
-| `interactive-report.json` or `print-report.json` | Process summary and upstream result. |
-
-Run one instance at a time. Configuration paths are reused, and repeating a prompt type overwrites its shared forwarded-request and upstream-response files. Mode-specific capture and report files are also replaced when that mode repeats.
-
-Records contain full prompts and replies, and can include local paths and device, session, organization, or workspace IDs. Credential redaction does not anonymize all content. Review records before sharing them. Generated directories are excluded by `.gitignore`.
-
-## Troubleshooting
-
-| Symptom | Action |
-| --- | --- |
-| Executable not found | Install the native CLI or set `CLAUDE_BINARY` to its full path. |
-| Terminal required | Run directly in PowerShell or Terminal rather than piping input. |
-| Permission denied on macOS | Check that the discovered native executable has execute permission; reinstalling through the official installer or Homebrew restores the launcher. |
-| Unknown CLI option | Check `claude --help`; the live Windows session used version 2.1.316. |
-| Connection error before capture | Check whether your execution environment permits loopback connections. |
-| Upstream `401` or `403` | Inspect the saved response for credential or account restrictions. |
-| Upstream `400` requesting a workspace | Use a credential that works without explicit workspace selection or add the required workspace header. |
-| Local `400` after a partial reply | The client requested another exchange after the one-request limit. |
+These records contain full prompts, replies, local paths, and other request metadata. API credentials are redacted, but the files are still sensitive and should not be shared without review. `outputs/` is excluded from Git.
 
 ## Development
 
@@ -189,10 +102,4 @@ npm run check
 npm test
 ```
 
-The automated checks cover executable discovery, request rewriting, credential redaction, response streaming, upstream errors, and the one-request limit. The GitHub Actions workflow runs them on Windows and macOS with fixture credentials and simulated upstream responses; it does not make paid API calls.
-
-Live interactive forwarding has been verified on Windows. Automated macOS coverage does not claim a live Anthropic session was run on a Mac.
-
-## License
-
-[Apache License 2.0](LICENSE). This project is independent and is not affiliated with or endorsed by Anthropic.
+This project is independent and is not affiliated with or endorsed by Anthropic.

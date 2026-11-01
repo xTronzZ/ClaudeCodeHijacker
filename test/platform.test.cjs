@@ -96,7 +96,7 @@ test('executable validation rejects directories and nonexistent files', async ()
 
 test('requiring the entrypoint has no startup side effects', () => {
   const entrypoint = require.resolve('../claude-code-relay.cjs');
-  const result = spawnSync(process.execPath, ['-e', 'const relay = require(process.argv[1]); process.stdout.write(typeof relay.createRelay + " " + typeof relay.rewriteRequest);', entrypoint], { encoding: 'utf8', shell: false });
+  const result = spawnSync(process.execPath, ['-e', 'const relay = require(process.argv[1]); process.stdout.write(typeof relay.main + " " + typeof relay.parseOptions);', entrypoint], { encoding: 'utf8', shell: false });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'function function');
   assert.equal(result.stderr, '');
@@ -107,6 +107,16 @@ test('help describes macOS and Windows discovery without starting the relay', ()
   assert.match(getHelp('darwin'), /\/opt\/homebrew\/bin\/claude/);
   assert.match(getHelp('darwin'), /\/usr\/local\/bin\/claude/);
   assert.match(getHelp('win32'), /claude\.exe/);
-  assert.match(getHelp('darwin'), /\[--hi\]/);
-  assert.doesNotMatch(getHelp('darwin'), /--hi-test/);
+  assert.match(getHelp('darwin'), /--project/);
+  assert.doesNotMatch(getHelp('darwin'), /--hi|--full|interactive|demonstration/);
+});
+
+test('default relay options accept a project and pass trailing arguments to Claude', () => {
+  const { parseOptions } = require('../claude-code-relay.cjs');
+  assert.deepEqual(parseOptions(['--project', '/tmp/example', '--', '--model', 'haiku']), {
+    help: false, project: '/tmp/example', claudeArgs: ['--model', 'haiku'],
+  });
+  assert.deepEqual(parseOptions([]), { help: false, project: null, claudeArgs: [] });
+  assert.throws(() => parseOptions(['--full']), /Unknown option/);
+  assert.throws(() => parseOptions(['--project']), /requires a directory/);
 });

@@ -8,8 +8,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "start": "node claude-code-relay.cjs --interactive --hi",
-    "test": "node --test",
-    "check": "node --check claude-code-relay.cjs"
+    "start": "node claude-code-relay.cjs",
+    "test": "node --test test/*.test.cjs",
+    "check": "node --check claude-code-relay.cjs && node --check lib/relay.cjs"
   }
 }
