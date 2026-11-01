@@ -62,6 +62,14 @@ When no environment key is configured, the fallback API key prompt does not echo
 
 The relay disables Claude Code Agent View and detached background-agent sessions for its spawned child by setting `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`. This prevents the left-arrow Agent View from switching into a separately managed process that bypasses the relay. The variable exists only in the spawned child environment; other Claude processes and tmux sessions are unchanged.
 
+Playwright MCP loads automatically on each relay launch. It provides browser navigation, screenshots, and network-request inspection using an independent Chrome browser. Each run gets a unique profile under its output directory. Chrome must be installed; sign in to test accounts again in this browser. Profiles are never reused by later runs.
+
+The relay generates a per-run `playwright-mcp.json` and passes it through Claude's `--mcp-config` argument. This does not change user or project MCP settings, so other Claude sessions do not load it. An explicit `--mcp-config` supplied after `--` takes precedence and disables the generated default. Playwright MCP is pinned to the tested version `0.0.84`; its npm cache is stored under `outputs/playwright/npm-cache/`.
+
+When Claude exits, including its normal Ctrl+C exit, the relay closes its listener and upstream connections and terminates the processes started within this session, including its MCP and browser processes. Cancelling a turn with Ctrl+C while Claude stays open does not trigger cleanup. A separate cleanup guard also watches for the relay exiting or being killed. It tracks process ancestry and start times, plus this run's unique browser profile path, and never targets another session by process name. Cleanup results are saved as `cleanup.json`.
+
+Logs, npm cache, browser profiles, and screenshots remain on disk. Changes made by Claude tools or in a web application are not rolled back by process cleanup.
+
 ## tmux
 
 The relay needs no tmux-specific configuration:

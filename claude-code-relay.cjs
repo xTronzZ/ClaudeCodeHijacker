@@ -4,6 +4,7 @@ const { spawn } = require('node:child_process');
 const { loadApiKey } = require('./lib/env.cjs');
 const { resolveClaudeBinary } = require('./lib/platform.cjs');
 const { createRelay, redact } = require('./lib/relay.cjs');
+const { startLifecycleGuard } = require('./lib/lifecycle.cjs');
 
 function getHelp(platform = process.platform) {
   const discovery = platform === 'win32'
@@ -35,7 +36,7 @@ function parseOptions(argv) {
 function createChildEnvironment(parentEnv, baseUrl) {
   const env = { ...parentEnv };
   for (const name of Object.keys(env)) {
-    if (/^(ANTHROPIC_(API_KEY|AUTH_TOKEN|BASE_URL)|CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY)|CLAUDE_BINARY)$/i.test(name)) delete env[name];
+    if (/^(ANTHROPIC_(API_KEY|AUTH_TOKEN|BASE_URL)|CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY)|CLAUDE_(BINARY|RELAY_API_KEY))$/i.test(name)) delete env[name];
   }
   const noProxy = [env.NO_PROXY || env.no_proxy, '127.0.0.1', 'localhost'].filter(Boolean).join(',');
   return Object.assign(env, {
@@ -44,6 +45,26 @@ function createChildEnvironment(parentEnv, baseUrl) {
     CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
     NO_PROXY: noProxy,
   });
+}
+
+async function prepareClaudeArgs(claudeArgs, outputDir) {
+  if (claudeArgs.some(arg => arg === '--mcp-config' || arg.startsWith('--mcp-config='))) {
+    return [...claudeArgs];
+  }
+  const configPath = path.join(outputDir, 'playwright-mcp.json');
+  const config = { mcpServers: { playwright: {
+    type: 'stdio', command: 'npx', args: [
+      '--yes', '--cache', path.join(__dirname, 'outputs', 'playwright', 'npm-cache'),
+      '@playwright/mcp@0.0.84', '--browser', 'chrome',
+      '--user-data-dir', path.join(outputDir, 'browser-profile'),
+      '--output-dir', path.join(outputDir, 'browser'),
+    ],
+  } } };
+  await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+  const args = [...claudeArgs];
+  const endOfOptions = args.indexOf('--');
+  args.splice(endOfOptions === -1 ? args.length : endOfOptions, 0, '--mcp-config', configPath);
+  return args;
 }
 
 async function readKeyWithoutEcho() {
@@ -87,45 +108,52 @@ async function main(argv = process.argv.slice(2)) {
   const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`;
   const outputDir = path.join(__dirname, 'outputs', 'sessions', runId);
   await fs.mkdir(outputDir, { recursive: true });
+  const claudeArgs = await prepareClaudeArgs(options.claudeArgs, outputDir);
 
   const loadedCredential = await loadApiKey({ envPath: path.join(__dirname, '.env') });
   let apiKey = loadedCredential?.apiKey || await readKeyWithoutEcho();
   if (!apiKey.startsWith('sk-ant-') || apiKey.length < 30) throw new Error('Unexpected credential input; no upstream request sent.');
 
   let child;
-  let killTimer;
+  let guard;
   let stopReason = null;
-  const stopChild = reason => {
-    if (!child || child.exitCode !== null || child.signalCode !== null) return;
-    stopReason ||= reason;
-    child.kill('SIGTERM');
-    killTimer ||= setTimeout(() => child.kill('SIGKILL'), 1000);
-    killTimer.unref();
-  };
   const relay = createRelay({ apiKey, outputDir });
   apiKey = '';
+  // Claude handles Ctrl+C itself while its UI is active. Cleanup starts only
+  // when Claude exits; cancelling a turn must not tear down its MCP/browser.
   const onInterrupt = () => {};
-  const onTerminate = () => stopChild('SIGTERM');
+  const requestShutdown = signal => {
+    stopReason ||= signal;
+    void relay.close().catch(() => {});
+    void guard?.finish(signal).catch(() => {});
+  };
+  const onTerminate = () => requestShutdown('SIGTERM');
+  const onHangup = () => requestShutdown('SIGHUP');
 
   try {
+    guard = await startLifecycleGuard(outputDir);
+    process.on('SIGINT', onInterrupt);
+    process.on('SIGTERM', onTerminate);
+    process.on('SIGHUP', onHangup);
     const baseUrl = await relay.listen();
+    if (stopReason) return 1;
     const env = createChildEnvironment(process.env, baseUrl);
 
     const startedAt = new Date().toISOString();
-    child = spawn(cliExecutable, options.claudeArgs, {
+    child = spawn(cliExecutable, claudeArgs, {
       cwd: projectDir, env, stdio: 'inherit', shell: false,
       windowsHide: process.platform === 'win32',
     });
-    process.on('SIGINT', onInterrupt);
-    process.on('SIGTERM', onTerminate);
-    const result = await new Promise(resolve => {
+    const childResult = new Promise(resolve => {
       let spawnError = null;
       child.once('error', error => { spawnError = error; });
       child.once('close', (code, signal) => resolve({ code, signal, error: spawnError }));
     });
+    await guard.track();
+    const result = await childResult;
 
-    clearTimeout(killTimer);
     await relay.close();
+    await guard.finish(stopReason || 'claude-exit');
     const state = relay.state;
     const cliOk = result.code === 0 || result.code === 130 || result.signal === 'SIGINT';
     const report = {
@@ -148,15 +176,18 @@ async function main(argv = process.argv.slice(2)) {
     await fs.writeFile(path.join(outputDir, 'report.json'), JSON.stringify(report, null, 2));
     return cliOk ? 0 : 1;
   } finally {
-    clearTimeout(killTimer);
-    process.off('SIGINT', onInterrupt);
-    process.off('SIGTERM', onTerminate);
-    if (child && child.exitCode === null && child.signalCode === null) stopChild('shutdown');
-    await relay.close();
+    try {
+      await relay.close();
+      await guard?.finish(stopReason || 'relay-exit');
+    } finally {
+      process.off('SIGINT', onInterrupt);
+      process.off('SIGTERM', onTerminate);
+      process.off('SIGHUP', onHangup);
+    }
   }
 }
 
-module.exports = { main, getHelp, parseOptions, readKeyWithoutEcho, createChildEnvironment };
+module.exports = { main, getHelp, parseOptions, readKeyWithoutEcho, createChildEnvironment, prepareClaudeArgs };
 
 if (require.main === module) main().then(code => { process.exitCode = code; })
   .catch(error => { console.error(redact(error.message)); process.exitCode = 1; });

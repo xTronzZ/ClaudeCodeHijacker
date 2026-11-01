@@ -10,6 +10,6 @@
   "scripts": {
     "start": "node claude-code-relay.cjs",
     "test": "node --test test/*.test.cjs",
-    "check": "node --check claude-code-relay.cjs && node --check lib/env.cjs && node --check lib/relay.cjs"
+    "check": "node --check claude-code-relay.cjs && node --check lib/env.cjs && node --check lib/lifecycle.cjs && node --check lib/relay.cjs"
   }
 }
