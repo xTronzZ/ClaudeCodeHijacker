@@ -120,3 +120,16 @@ test('default relay options accept a project and pass trailing arguments to Clau
   assert.throws(() => parseOptions(['--full']), /Unknown option/);
   assert.throws(() => parseOptions(['--project']), /requires a directory/);
 });
+
+test('relay environment disables Agent View only in the spawned Claude child', () => {
+  const { createChildEnvironment } = require('../claude-code-relay.cjs');
+  const parent = { PATH: '/usr/bin', NO_PROXY: 'internal.example', ANTHROPIC_API_KEY: 'real-key',
+    CLAUDE_CODE_DISABLE_AGENT_VIEW: '0' };
+  const child = createChildEnvironment(parent, 'http://127.0.0.1:45678');
+  assert.deepEqual(parent, { PATH: '/usr/bin', NO_PROXY: 'internal.example', ANTHROPIC_API_KEY: 'real-key',
+    CLAUDE_CODE_DISABLE_AGENT_VIEW: '0' });
+  assert.equal(child.ANTHROPIC_BASE_URL, 'http://127.0.0.1:45678');
+  assert.equal(child.ANTHROPIC_API_KEY, 'sk-ant-api03-local-relay-placeholder-not-a-real-key');
+  assert.equal(child.CLAUDE_CODE_DISABLE_AGENT_VIEW, '1');
+  assert.equal(child.NO_PROXY, 'internal.example,127.0.0.1,localhost');
+});

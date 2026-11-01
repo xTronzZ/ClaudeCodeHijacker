@@ -32,6 +32,20 @@ function parseOptions(argv) {
   return options;
 }
 
+function createChildEnvironment(parentEnv, baseUrl) {
+  const env = { ...parentEnv };
+  for (const name of Object.keys(env)) {
+    if (/^(ANTHROPIC_(API_KEY|AUTH_TOKEN|BASE_URL)|CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY)|CLAUDE_BINARY)$/i.test(name)) delete env[name];
+  }
+  const noProxy = [env.NO_PROXY || env.no_proxy, '127.0.0.1', 'localhost'].filter(Boolean).join(',');
+  return Object.assign(env, {
+    ANTHROPIC_BASE_URL: baseUrl,
+    ANTHROPIC_API_KEY: 'sk-ant-api03-local-relay-placeholder-not-a-real-key',
+    CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
+    NO_PROXY: noProxy,
+  });
+}
+
 async function readKeyWithoutEcho() {
   if (!process.stdin.isTTY || typeof process.stdin.setRawMode !== 'function') {
     throw new Error('A terminal is required for non-echoed credential input.');
@@ -95,16 +109,7 @@ async function main(argv = process.argv.slice(2)) {
 
   try {
     const baseUrl = await relay.listen();
-    const env = { ...process.env };
-    for (const name of Object.keys(env)) {
-      if (/^(ANTHROPIC_(API_KEY|AUTH_TOKEN|BASE_URL)|CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY)|CLAUDE_BINARY)$/i.test(name)) delete env[name];
-    }
-    const noProxy = [env.NO_PROXY || env.no_proxy, '127.0.0.1', 'localhost'].filter(Boolean).join(',');
-    Object.assign(env, {
-      ANTHROPIC_BASE_URL: baseUrl,
-      ANTHROPIC_API_KEY: 'sk-ant-api03-local-relay-placeholder-not-a-real-key',
-      NO_PROXY: noProxy,
-    });
+    const env = createChildEnvironment(process.env, baseUrl);
 
     const startedAt = new Date().toISOString();
     child = spawn(cliExecutable, options.claudeArgs, {
@@ -151,7 +156,7 @@ async function main(argv = process.argv.slice(2)) {
   }
 }
 
-module.exports = { main, getHelp, parseOptions, readKeyWithoutEcho };
+module.exports = { main, getHelp, parseOptions, readKeyWithoutEcho, createChildEnvironment };
 
 if (require.main === module) main().then(code => { process.exitCode = code; })
   .catch(error => { console.error(redact(error.message)); process.exitCode = 1; });

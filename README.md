@@ -60,6 +60,8 @@ node ./claude-code-relay.cjs --project ../my-project -- --model haiku --permissi
 
 When no environment key is configured, the fallback API key prompt does not echo input. After the key is loaded, Claude Code behaves as a normal persistent interactive session with its regular tools, settings, plugins, MCP servers, permissions, session history, thinking, context management, prompt caching, and output limits.
 
+The relay disables Claude Code Agent View and detached background-agent sessions for its spawned child by setting `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`. This prevents the left-arrow Agent View from switching into a separately managed process that bypasses the relay. The variable exists only in the spawned child environment; other Claude processes and tmux sessions are unchanged.
+
 ## tmux
 
 The relay needs no tmux-specific configuration:
